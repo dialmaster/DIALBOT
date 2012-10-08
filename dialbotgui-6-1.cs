@@ -772,7 +772,7 @@ public class DialBOT : Window {
         }
 
         if (isHelpMatch.Success) {
-            return "PRIVMSG " + CHANNEL + " :The commands I respond to are: !WEATHER <ZIPCODE OR CITY AND STATE>, !STOCK <STOCK SYMBOL>, !NEWS, !BD, !UPBALL, !DOWNBALL, !BDREP, !BDSCORE and !BDHISTORY.";
+            return "PRIVMSG " + CHANNEL + " :The commands I respond to are: 'DialBOT ROLL #d#', !WEATHER <ZIPCODE>, !STOCK <STOCK SYMBOL>, !NEWS <SUBREDDIT>, !BD, !UPBALL, !DOWNBALL, !BDREP, !BDSCORE and !BDHISTORY.";
         }
 
 
