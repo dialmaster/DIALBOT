@@ -793,7 +793,7 @@ public class DialBOT : Window {
                 outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Don't talk to me like that. You look like a turtle who lost his shell.";
                 break;
             case 5:
-                outmsg = "PRIVMSG " + CHANNEL + " : Boy! We as a group, might not smell great.";
+                outmsg = "PRIVMSG " + CHANNEL + " :Boy! We as a group, might not smell great.";
                 break;
             case 6:
                 outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Oh, we're going to have fun. We're going to stay here and make nachos and see who can fall asleep the earliest! Fun, fun, fun, fun!";
@@ -832,7 +832,7 @@ public class DialBOT : Window {
                 outmsg = "PRIVMSG " + CHANNEL + " :What are you talking about? Everyone loved your little " + username + " party. Nothing brings a team together like a harrowing experience. You pulled it off.";
                 break;
             case 18:
-                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": So Heres some advice I wish I wouldve got when I was your age: Live every week, like its 'shark week'.";
+                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": So Here's some advice I wish I would've got when I was your age: Live every week, like it's 'shark week'.";
                 break;
             case 19:
                 outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Why don't you shut your mouth, back that ass up, and make me a sandwich.";
