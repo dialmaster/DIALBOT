@@ -708,6 +708,12 @@ public class DialBOT : Window {
             }
 
         }
+
+        // Ignore these idiots
+        if (username.Equals("CamlTow") || username.Equals("SUPERLOUD") || username.Equals("Towelie") || username.Equals("dumbfuck")) {
+            return "";
+        }
+
         Regex iswhoWins = new Regex(@"who wins\?$", RegexOptions.IgnoreCase);
         Match iswhoWinsMatch = iswhoWins.Match(input);
 
