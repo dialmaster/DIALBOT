@@ -1,6 +1,4 @@
-﻿/* DialBOT in a GUI! */
-
-using System;
+﻿using System;
 using System.Net;
 using System.Net.Sockets;
 using System.IO;
@@ -11,41 +9,35 @@ using System.Xml;
 using System.Text;
 using System.Linq;
 using System.Web;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using Gtk;
  
 // TODO: Top 10 ranked submitters (by rank)
 // TODO: Top 10 messages by score
-
-
 public class DialBOT : Window {
+    public static string configFileName = "dialbot.ini";
 
-    static string PING = "PING :";
-    // Irc server to connect
-    public static string SERVER = "irc.nogoodshits.net";
-    //public static string SERVER = "j3b.us";
-
-    // Irc server's port (6667 is default port)
-    private static int PORT = 6667;
-    // User information defined in RFC 2812 (Internet Relay Chat: Client Protocol) is sent to irc server
-    private static string USER = "USER DialBot 8 * :I'm a crappy C# irc bot";
-    // Bot's nickname
-    private static string NICK = "DialBOT";
-    // Channel to join
-    private static string CHANNEL = "#nogoodshits";
-    //private static string CHANNEL = "#dialshits";
+    // These are all loaded from the config file
+    public static string SERVER = "";     // IRC server, eg irc.test.com
+    private static int PORT;              // IRC port, eg 6670
+    private static string NICK = "";      // Bot nick, eg 'TestBot'
+    private static string CHANNEL = "";   // Channel to join on startup, eg #somechannel
+    private static string DEEPTHING = ""; // Thing to be deep in, eg "knee deep" or "neck deep"
+    private static string USER = "";	  // The user string sent per RFC 2812
+    private static int KILLTIME = 0;  // Automatically kill bot after X seconds
 
     // StreamWriter is declared here so that PingSender can access it
     public static StreamWriter writer;
     private static Random random = new Random();
 
-    /* All the possible balls-deep responses. Since these will be up and downvoteable they need to have a SCORE associated to them.
-     *  Top level dictionary key is the balls-deep response. Second level contains NICK as key and VOTE as the int (either 2,1 or -1)
+    /* All the possible thing-deep responses. Since these will be up and downvoteable they need to have a SCORE associated to them.
+     *  Top level dictionary key is the thing-deep response. Second level contains NICK as key and VOTE as the int (either 2,1 or -1)
      * Total score is the total of all votes. The FIRST person to put a new entry in gets a vote of 2. This also allows you to 
      * distinguish WHO put the entry in.
      * This will simply be stored tab-delimited as RESPONSE\tUSER\t\VOTE\tUSER\tVOTE\t  ect... */
-    private static Dictionary<String, Dictionary<String, Int16>> ballsDeep = new Dictionary<String, Dictionary<String, Int16>>();
-    private static String lastBall = "";
-    private static Boolean cancelLOUD = false;
+    private static Dictionary<String, Dictionary<String, Int16>> thingsDeep = new Dictionary<String, Dictionary<String, Int16>>();
+    private static String lastThing = "";
 
 
     private static Statusbar statusbar;
@@ -61,14 +53,11 @@ public class DialBOT : Window {
     private static string inputLine;
     private static StreamReader reader;
     private static CheckButton followConsole;
-    private static TreeStore bdstore;
+    private static TreeStore tdstore;
     private static Entry filterEntry;
     private static TreeModelFilter filter;
-    private static TreeModelSort bdsorted;
-    private static TreeView ballsdeeptree;
-
-    private static int deathTimer=16000; // Kill DialBOT every so often so that he stays in channel.
-                                         // This requires that the perl program autorestart wraps this....
+    private static TreeModelSort tdsorted;
+    private static TreeView thingdeeptree;
 
     public DialBOT() : base("DialBOT") {
         SetDefaultSize(800, 600);
@@ -76,91 +65,87 @@ public class DialBOT : Window {
         DeleteEvent += delegate { Application.Quit(); };
 
         // Top level container. This vertically divides the window into 3 sections:
-        // Top is the 2 windows (balls-deep items and console output        
+        // Top is the 2 windows (thing-deep items and console output        
         VBox topvbox = new VBox(false, 5);
 
         // Lets build the top 1/3rd here.
-        Frame ballsdeepframe = new Frame("Balls-Deep Items");       
+        Frame thingdeepframe = new Frame("Thing-Deep Items");       
         Frame consoleframe = new Frame("Console Output");
-        // HBox mainhbox = new HBox(true,2);
 
-        ballsdeeptree = new TreeView();
+        thingdeeptree = new TreeView();
 
-        bdstore = new TreeStore (typeof(string), typeof (string), typeof (string), typeof (string));
-        LoadBalls();
+        tdstore = new TreeStore (typeof(string), typeof (string), typeof (string), typeof (string));
+        LoadThings();
         fillStore();
 
 
         // Put the TreeStore into a TreeModelSort so we can sort columns...        
         // Sort by score for now
-        bdsorted = new TreeModelSort(bdstore);
-        bdsorted.SetSortColumnId(1,SortType.Descending);        
+        tdsorted = new TreeModelSort(tdstore);
+        tdsorted.SetSortColumnId(1,SortType.Descending);        
 
         // Put the TreeModelSort into a TreeModelFilter so we can implement the filtering
         filterEntry = new Entry();
-        // filter = new TreeModelFilter(bdsorted,null);
-        // filter.VisibleFunc = FilterTreeFunc;   // Use this as the filter function.
 
         // And then set the visible TreeView to use the filter as it's store.
-        ballsdeeptree.Model = bdsorted;
+        thingdeeptree.Model = tdsorted;
 
-        ballsdeeptree.HeadersVisible = true;
-        ballsdeeptree.HeadersClickable=true;        
-        ballsdeeptree.AppendColumn ("Added By", new CellRendererText (), "text", 0);
-        ballsdeeptree.AppendColumn ("Score", new CellRendererText (), "text", 1);
-        CellRendererText ballRenderer = new CellRendererText();        
-        ballsdeeptree.AppendColumn ("Text", ballRenderer, "text", 2);
+        thingdeeptree.HeadersVisible = true;
+        thingdeeptree.HeadersClickable=true;        
+        thingdeeptree.AppendColumn ("Added By", new CellRendererText (), "text", 0);
+        thingdeeptree.AppendColumn ("Score", new CellRendererText (), "text", 1);
+        CellRendererText thingRenderer = new CellRendererText();        
+        thingdeeptree.AppendColumn ("Text", thingRenderer, "text", 2);
         CellRendererText voteRenderer = new CellRendererText();        
         voteRenderer.Editable=true;
         voteRenderer.Edited+=editVotes;
-        ballsdeeptree.AppendColumn ("Votes", voteRenderer, "text", 3);
+        thingdeeptree.AppendColumn ("Votes", voteRenderer, "text", 3);
   
-        TreeViewColumn col = ballsdeeptree.GetColumn(0);
+        TreeViewColumn col = thingdeeptree.GetColumn(0);
         col.Clickable=true;
         col.Resizable = true;
         col.Clicked += new EventHandler (col_clicked0);        
 
-        col = ballsdeeptree.GetColumn(1);
+        col = thingdeeptree.GetColumn(1);
         col.Resizable = true;
         col.Clickable=true;
         col.Clicked += new EventHandler (col_clicked1);        
 
-        col = ballsdeeptree.GetColumn(2);
+        col = thingdeeptree.GetColumn(2);
         col.Resizable = true;
         col.Clickable=true;
         col.Clicked += new EventHandler (col_clicked2);        
 
-        col = ballsdeeptree.GetColumn(3);
+        col = thingdeeptree.GetColumn(3);
         col.Clickable=true;
         col.Resizable = true;
         col.Clicked += new EventHandler (col_clicked3);        
 
 
 
-        ScrolledWindow ballsdeepscroll = new ScrolledWindow();
+        ScrolledWindow thingdeepscroll = new ScrolledWindow();
 
-        ballsdeepscroll.Add(ballsdeeptree);
+        thingdeepscroll.Add(thingdeeptree);
 
         Button deleteentry = new Button("Remove Entry");
         deleteentry.SetSizeRequest(70, 30);
-        deleteentry.Clicked += new EventHandler(deleteBallMsg);  
+        deleteentry.Clicked += new EventHandler(deleteThingMsg);  
 
-        ballsdeepframe.Add(ballsdeepscroll);
-        ballsdeepframe.Add(deleteentry);
+        thingdeepframe.Add(thingdeepscroll);
+        thingdeepframe.Add(deleteentry);
 
         // Entry box and label to filter on message as well as an HBox to put them next to each other
         filterEntry.Changed += OnFilterEntryTextChanged;
-        Label filterLabel = new Label("Ball Message Search: ");
+        Label filterLabel = new Label("Thing Message Search: ");
         HBox filterBox = new HBox();
         filterBox.PackStart(filterLabel,false,false,5);
         filterBox.PackStart(filterEntry,true,true,5);
 
 
-        VBox ballvbox = new VBox(false,5);
-        ballvbox.Add(ballsdeepframe);
-        //ballvbox.PackStart(filterBox,false,false,1);        
+        VBox thingvbox = new VBox(false,5);
+        thingvbox.Add(thingdeepframe);
 
-        topvbox.Add(ballvbox);
+        topvbox.Add(thingvbox);
 
         consoleview = new TextView();
         consolebuffer=consoleview.Buffer;
@@ -180,8 +165,6 @@ public class DialBOT : Window {
         consolevbox.PackStart(followConsole,false,false,1);
 
         topvbox.Add(consolevbox);
-
-        //        topvbox.PackStart(mainhbox, true,true,4);
 
         // Now the 2nd 3rd. This contains 2 buttons. A start/stop, and a close.
         HBox buttonhbox = new HBox(true, 3);
@@ -210,49 +193,49 @@ public class DialBOT : Window {
         ShowAll();
     }
 
-    public static void deleteBallMsg(object obj, EventArgs args) {
+    public static void deleteThingMsg(object obj, EventArgs args) {
         // Find out what they have selected
 
-        // Remove from bdstore
+        // Remove from tdstore
 
         // Remove from the underlying data model
 
-        // Saveballs
+        // Savethings
 
     }
 
-    // What to do when someone edits the underlying ball vote text. Once again the data DialBot uses
+    // What to do when someone edits the underlying thing vote text. Once again the data this uses
     // must be updated from the model
     public static void editVotes(object o, EditedArgs args) {
         // New text comes in in args.NewText
         TreeIter iter;
         TreePath startPath =  new TreePath(args.Path.ToString());
-        TreePath convPath = bdsorted.ConvertPathToChildPath(startPath);
-        bdstore.GetIter(out iter, convPath);
-        Console.WriteLine("The value of the cell is currently " + bdstore.GetValue(iter,3).ToString() +
+        TreePath convPath = tdsorted.ConvertPathToChildPath(startPath);
+        tdstore.GetIter(out iter, convPath);
+        Console.WriteLine("The value of the cell is currently " + tdstore.GetValue(iter,3).ToString() +
 "and we are going to write " + args.NewText + " to it.");
 
         // Update vote string in UI/model for the ui
-        bdstore.SetValue(iter,3,args.NewText);
+        tdstore.SetValue(iter,3,args.NewText);
     
-        // Pass in: ballmsg, new votestring, and who added it
+        // Pass in: thingmsg, new votestring, and who added it
         // Update vote Dictionary in the underlying data structure
-        String thisBallMsg = bdstore.GetValue(iter,2).ToString();
-        modifyBallVotes(thisBallMsg, args.NewText, bdstore.GetValue(iter,0).ToString());
+        String thisThingMsg = tdstore.GetValue(iter,2).ToString();
+        modifyThingVotes(thisThingMsg, args.NewText, tdstore.GetValue(iter,0).ToString());
 
         // Recalc score from underlying data
-        Int16 totalvotes = getBallScore(thisBallMsg).First().Value;
+        Int16 totalvotes = getThingScore(thisThingMsg).First().Value;
         String score = totalvotes.ToString();
         
-        String newVoteString = getVoteString(thisBallMsg);
+        String newVoteString = getVoteString(thisThingMsg);
 
         Console.WriteLine("Underlying data after update: " + newVoteString);
 
         // Set new score in the UI
-        bdstore.SetValue(iter,1,score);
+        tdstore.SetValue(iter,1,score);
         
-        // And SaveBalls to disks!
-        SaveBalls();
+        // And SaveThing to disk!
+        SaveThings();
     }
     
 
@@ -270,25 +253,25 @@ public class DialBOT : Window {
         TreeViewColumn col = (TreeViewColumn) o;
         col.SortOrder = SetSortOrder (col); // set order asc or desc
         col.SortIndicator = true; // turn on sort indicator
-        bdsorted.SetSortColumnId (0, col.SortOrder);
+        tdsorted.SetSortColumnId (0, col.SortOrder);
     }
     private static void col_clicked1 (object o, EventArgs args)    {
         TreeViewColumn col = (TreeViewColumn) o;
         col.SortOrder = SetSortOrder (col); // set order asc or desc
         col.SortIndicator = true; // turn on sort indicator
-        bdsorted.SetSortColumnId (1, col.SortOrder);
+        tdsorted.SetSortColumnId (1, col.SortOrder);
     }
     private static void col_clicked2 (object o, EventArgs args)    {
         TreeViewColumn col = (TreeViewColumn) o;
         col.SortOrder = SetSortOrder (col); // set order asc or desc
         col.SortIndicator = true; // turn on sort indicator
-        bdsorted.SetSortColumnId (2, col.SortOrder);
+        tdsorted.SetSortColumnId (2, col.SortOrder);
     }
     private static void col_clicked3 (object o, EventArgs args)    {
         TreeViewColumn col = (TreeViewColumn) o;
         col.SortOrder = SetSortOrder (col); // set order asc or desc
         col.SortIndicator = true; // turn on sort indicator
-        bdsorted.SetSortColumnId (3, col.SortOrder);
+        tdsorted.SetSortColumnId (3, col.SortOrder);
     }
 
 
@@ -300,11 +283,11 @@ public class DialBOT : Window {
     }
 
     bool FilterTreeFunc(TreeModel model, TreeIter iter) {
-        String ballsmessage = model.GetValue(iter,2).ToString();
+        String thingmessage = model.GetValue(iter,2).ToString();
         if (filterEntry.Text == "") {
             return true;
         } 
-        if (ballsmessage.IndexOf(filterEntry.Text) > -1) {
+        if (thingmessage.IndexOf(filterEntry.Text) > -1) {
             return true;
         } else {
             return false;
@@ -314,37 +297,39 @@ public class DialBOT : Window {
 
     public static void Main() {
         Application.Init();
-        new DialBOT();
-        Connect();
+	new DialBOT();
+	LoadConfig();
+	Connect();
         GLib.Timeout.Add(20, new GLib.TimeoutHandler(Update));
         GLib.Timeout.Add(18000, new GLib.TimeoutHandler(Ping));
         Application.Run();
-
-
     }
 
     static public void Connect() {
-        addToConsole("Connecting to IRC...");
+        addToConsole("Connecting to IRC with USER of " + USER);
         irc = new TcpClient(SERVER, PORT);
-        stream = irc.GetStream();
-        reader = new StreamReader(stream);
-        writer = new StreamWriter(stream);
-        writer.WriteLine(USER);
+
+	stream = irc.GetStream();
+	System.Net.Security.SslStream sslstr = new System.Net.Security.SslStream(stream, false, (a, b, c, d) => true);
+	sslstr.AuthenticateAsClient(SERVER);
+        reader = new StreamReader(sslstr);
+        writer = new StreamWriter(sslstr);
+
+	writer.WriteLine(USER);
         writer.Flush();
         writer.WriteLine("NICK " + NICK);
         writer.Flush();
-        // For ngs
-        writer.WriteLine("JOIN " + CHANNEL + " monkeyspoon");
+        writer.WriteLine("JOIN " + CHANNEL);
         writer.Flush();
         addToConsole("Connected.");
     }
 
     static bool Ping() {
-        deathTimer-=15;
-        addToConsole("Ping sent! Total time is " + deathTimer);        
-        if (deathTimer < 0) { System.Environment.Exit(0); }
+        KILLTIME-=15;
+        addToConsole("Ping sent! Total time is " + KILLTIME);        
+        if (KILLTIME < 0) { System.Environment.Exit(0); }
         try {
-            writer.WriteLine(PING + SERVER);
+            writer.WriteLine("PING :" + SERVER);
             writer.Flush();    
         } catch (System.Exception ex) {    
             addToConsole("Exception in PING: "+ex);            
@@ -376,7 +361,7 @@ public class DialBOT : Window {
                         String outmsg = "";
                         if (input["Type"].Equals("KICK")) {
                             Thread.Sleep(1000);
-                            outmsg = "JOIN " + CHANNEL + " monkeyspoon";
+                            outmsg = "JOIN " + CHANNEL;
                         }
                         if (input["Type"].Equals("JOIN") && (int)random.Next(0, 3) == 1) {
                             outmsg = Greeting(input["User"]);
@@ -404,7 +389,7 @@ public class DialBOT : Window {
                                 writer.Close();
                                 reader.Close();
                                 irc.Close();
-                                SaveBalls();
+                                SaveThings();
                                 Environment.Exit(0);
                             }
                             addToConsole("Writing to IRC: " + outmsg);
@@ -420,10 +405,8 @@ public class DialBOT : Window {
             // Show the exception, sleep for a while and try to establish a new connection to irc server
             Console.WriteLine(e.ToString());
 
-            // Just re-running Connect() did not work... Let's try it this way.
             Thread.Sleep(15000);
             Connect();
-            //Main();
         }        
         return true;
     }
@@ -506,58 +489,58 @@ public class DialBOT : Window {
     }
 
     // Used for adding, subtracting, up and downvoting. A given nick can only add or vote ONCE, but they can SWITCH their vote if they wish
-    static private String ballVote(String ballmsg, Int16 vote, String username) {
-        String ballRet = "";
+    static private String thingVote(String thingmsg, Int16 vote, String username) {
+        String thingRet = "";
 
         // No message? Just return.
-        if (ballmsg.Equals("")) { return ""; }
+        if (thingmsg.Equals("")) { return ""; }
 
         // If message already existed
-        if (ballsDeep.ContainsKey(ballmsg)) {
+        if (thingsDeep.ContainsKey(thingmsg)) {
             if (vote == 2) {
-                return username + ": You cannot ADD this to my list of things to be balls-deep in. It's already there.";
+                return username + ": You cannot ADD this to my list of things to be " + DEEPTHING + "-deep in. It's already there.";
             }
-            if (ballsDeep[ballmsg].ContainsKey(username)) { // If this username already had a vote for that
-                if (ballsDeep[ballmsg][username] == 2) {
+            if (thingsDeep[thingmsg].ContainsKey(username)) { // If this username already had a vote for that
+                if (thingsDeep[thingmsg][username] == 2) {
                     return username + ": No voting for your own messages.";
                 }
-                if (vote != ballsDeep[ballmsg][username]) { // User is CHANGING their vote
-                    ballsDeep[ballmsg][username] = vote;
+                if (vote != thingsDeep[thingmsg][username]) { // User is CHANGING their vote
+                    thingsDeep[thingmsg][username] = vote;
                     if (vote == 1) {
-                        ballRet = username + ": Changing your vote from a downvote to an upvote.";
+                        thingRet = username + ": Changing your vote from a downvote to an upvote.";
                     } else if (vote == -1) {
-                        ballRet = username + ": Changing your vote from an upvote to a downvote.";
-                        if (getBallScore(ballmsg).First().Value <= -1) { ballRet = "Due to downvotes, you will no longer find me balls-deep in " + ballmsg + "."; }
+                        thingRet = username + ": Changing your vote from an upvote to a downvote.";
+                        if (getThingScore(thingmsg).First().Value <= -1) { thingRet = "Due to downvotes, you will no longer find me " + DEEPTHING + "-deep in " + thingmsg + "."; }
                     }
                 } else {// user is trying to vote the same
-                    ballRet = username + ": Yeah man... whatever.";
+                    thingRet = username + ": Yeah man... whatever.";
                 }
             } else { // This is a NEW vote for this by this user.
-                ballsDeep[ballmsg][username] = vote;
-                if (getBallScore(ballmsg).First().Value <= -2) { ballRet = "Due to downvotes, you will no longer find me balls-deep in " + ballmsg + "."; }
-        ballRet = "";
+                thingsDeep[thingmsg][username] = vote;
+                if (getThingScore(thingmsg).First().Value <= -2) { thingRet = "Due to downvotes, you will no longer find me " + DEEPTHING + "-deep in " + thingmsg + "."; }
+        thingRet = "";
             }
         } else { // Message did NOT exist, we are ADDING it with this user and 2 votes.
             Dictionary<String, Int16> addMsg = new Dictionary<String, Int16>();
             addMsg[username] = 2;
-            ballsDeep[ballmsg] = addMsg;
-            ballRet = username + ": You will now occasionally find me balls-deep in " + ballmsg + ".";
+            thingsDeep[thingmsg] = addMsg;
+            thingRet = username + ": You will now occasionally find me " + DEEPTHING + "-deep in " + thingmsg + ".";
         }
 
-        SaveBalls();
-        updateStore(ballmsg);
+        SaveThings();
+        updateStore(thingmsg);
 
-        return ballRet;
+        return thingRet;
     }
 
     static private String whoWins() {
         Dictionary<String, Int16> votesByUser = new Dictionary<String, Int16>();
     
-        // Loop through all entries in the ballsdeep, 
+        // Loop through all entries 
         int highest = -1000;
-        foreach (String ballmsg in ballsDeep.Keys) {
-            Int16 totalvotes = getBallScore(ballmsg).First().Value;
-            String user = getBallScore(ballmsg).First().Key;
+        foreach (String thingmsg in thingsDeep.Keys) {
+            Int16 totalvotes = getThingScore(thingmsg).First().Value;
+            String user = getThingScore(thingmsg).First().Key;
             if (votesByUser.Keys.Contains(user)) {
                 votesByUser[user] += totalvotes;
             } else {
@@ -569,7 +552,7 @@ public class DialBOT : Window {
             if (votesByUser[thisuser] > highest) {
                 winningUsers.Clear();
                 winningUsers.Add(thisuser);
-                highest=votesByUser[thisuser];
+                highest = votesByUser[thisuser];
             }
             if (votesByUser[thisuser] == highest && !winningUsers.Contains(thisuser)) {
                 winningUsers.Add(thisuser);
@@ -592,20 +575,20 @@ public class DialBOT : Window {
 
 
     // Return a simple string array of all the *active* (totalvotes >-2) entries
-    static public List<String> getActiveBalls() {
-        List<String> activeBalls = new List<String>();
+    static public List<String> getActiveThings() {
+        List<String> activeThings = new List<String>();
 
-        foreach (String ballmsg in ballsDeep.Keys) {
-            int totalvotes = getBallScore(ballmsg).First().Value;
-            if (totalvotes > -2) { activeBalls.Add(ballmsg); }
+        foreach (String thingmsg in thingsDeep.Keys) {
+            int totalvotes = getThingScore(thingmsg).First().Value;
+            if (totalvotes > -2) { activeThings.Add(thingmsg); }
         }
 
-        return activeBalls;
+        return activeThings;
     }
 
-    static public String getVoteString(String thisBallMsg) {
+    static public String getVoteString(String thisThingMsg) {
         String retval = String.Empty;
-        foreach (KeyValuePair<String, Int16> innerEntry in ballsDeep[thisBallMsg]) {
+        foreach (KeyValuePair<String, Int16> innerEntry in thingsDeep[thisThingMsg]) {
         if (innerEntry.Value < 2) { 
             retval += innerEntry.Key + " = " + innerEntry.Value + "; "; 
         }
@@ -614,14 +597,14 @@ public class DialBOT : Window {
         return retval;
     }
 
-    static public void modifyBallVotes(String thisBallMsg, String theseBallVotes, String whoadded) {
+    static public void modifyThingVotes(String thisThingMsg, String theseThingVotes, String whoadded) {
 
-        // Ripped from LoadBalls. 2 things to note here:
-        // 1) The ballstring getting passed is from theUI and looks like:
+        // 2 things to note here:
+        // 1) The thingstring getting passed is from theUI and looks like:
         //dialman=1; kidlazarus=-1;gaziel=1;
-        // So we need to parse that and 2: The person who submitted the ballmsg is NOT going
+        // So we need to parse that and 2: The person who submitted the thingmsg is NOT going
         // to be in that string, but needs to be in the new dictionary with 2 votes.    
-        String[] splitLine = theseBallVotes.Split(';');
+        String[] splitLine = theseThingVotes.Split(';');
         Dictionary<String, Int16> innerDict = new Dictionary<String, Int16>();
         for (int i = 0; i < splitLine.Count()-1; i += 1) {
             String thisVote = splitLine[i];  // This looks like dialman = 1.There may be a leading or trailing space
@@ -632,13 +615,13 @@ public class DialBOT : Window {
             innerDict[myUser.Trim()] = Convert.ToInt16(myVote);
         }
         innerDict[whoadded] = 2;
-        ballsDeep[thisBallMsg] = innerDict;
+        thingsDeep[thisThingMsg] = innerDict;
 
     }
 
 
-    static public Dictionary<String,Int16> getBallScore(String thisBallMsg) {
-        Dictionary<String, Int16> ballInfo = new Dictionary<String, Int16>();
+    static public Dictionary<String,Int16> getThingScore(String thisThingMsg) {
+        Dictionary<String, Int16> thingInfo = new Dictionary<String, Int16>();
 
         // Stupid cheaters. This can't STOP it, but this way only approved nicks can have votes that count.
         Dictionary<String, Int16> approvedVoters = new Dictionary<String, Int16>()
@@ -657,6 +640,7 @@ public class DialBOT : Window {
             {"KidLazarus", 1},
             {"PopeKetric", 1},
             {"Doogles", 1},
+            {"grampa_doggles", 1},
             {"Nerdmaster", 1},
             {"telzey", 1}
         };
@@ -664,8 +648,8 @@ public class DialBOT : Window {
         
         String whoadded = "";
         Int16 totalvotes = 0;
-        if (!ballsDeep.ContainsKey(thisBallMsg)) { return ballInfo; }
-        foreach (KeyValuePair<String, Int16> innerEntry in ballsDeep[thisBallMsg]) {
+        if (!thingsDeep.ContainsKey(thisThingMsg)) { return thingInfo; }
+        foreach (KeyValuePair<String, Int16> innerEntry in thingsDeep[thisThingMsg]) {
             if (innerEntry.Value == 2) {
                 whoadded = innerEntry.Key;
             } else {
@@ -677,15 +661,15 @@ public class DialBOT : Window {
             }
 
         }
-        ballInfo[whoadded] = totalvotes;
-        return ballInfo;
+        thingInfo[whoadded] = totalvotes;
+        return thingInfo;
     }
 
-    static public int getBallRep(String username) {
+    static public int getThingRep(String username) {
         Int16 totalvotes = 0;
-        foreach (String ballmsg in ballsDeep.Keys) {
-            if (getBallScore(ballmsg).First().Key.Equals(username)) {
-                totalvotes += getBallScore(ballmsg).First().Value;
+        foreach (String thingmsg in thingsDeep.Keys) {
+            if (getThingScore(thingmsg).First().Key.Equals(username)) {
+                totalvotes += getThingScore(thingmsg).First().Value;
             }
         }
         if (username.Equals("dialman")) {
@@ -694,7 +678,6 @@ public class DialBOT : Window {
         return totalvotes;
     }
 
-    // What we really want here is to parse what was SAID to me and do or say something relevant. Use some randomness to mix it up
     static private String ChanResponsesToMe(String input, String username) {
         String outmsg = "";
         int choice = random.Next(0, 30);
@@ -721,37 +704,37 @@ public class DialBOT : Window {
         Match isHelpMatch = isHelp.Match(input);
         Regex isRoll = new Regex(@"roll\s\d+d\d+", RegexOptions.IgnoreCase);
         Match isRollMatch = isRoll.Match(input);
-        Regex isBallsDeep = new Regex(@"balls\-deep", RegexOptions.IgnoreCase);
-        Match isBallsDeepMatch = isBallsDeep.Match(input);
+        Regex isThingsDeep = new Regex(@"" + DEEPTHING + @"\-deep", RegexOptions.IgnoreCase);
+        Match isThingsDeepMatch = isThingsDeep.Match(input);
         if (iswhoWinsMatch.Success) {
             return "PRIVMSG " + CHANNEL + " :" + whoWins();
         }
 
 
-        if (isBallsDeepMatch.Success) {
+        if (isThingsDeepMatch.Success) {
             choice = random.Next(0, 6);
-            List<String> activeBalls = getActiveBalls();
-            lastBall = activeBalls.ElementAt(random.Next(0, activeBalls.Count)).ToString();
-            switch (choice) {
+            List<String> activeThings = getActiveThings();
+            lastThing = activeThings.ElementAt(random.Next(0, activeThings.Count)).ToString();
+            // TODO: Move to config
+	    switch (choice) {
                 case 0:
-                    outmsg = "PRIVMSG " + CHANNEL + " :"+username +": Have you ever gone balls-deep in " + lastBall + "? It's wonderful!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :"+username +": Have you ever gone balls-deep in " + lastThing + "? It's wonderful!";
                     break;
                 case 1:
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Oh yeah. I am balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Oh yeah. I am balls-deep in " + lastThing + "!";
                     break;
                 case 2:
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": My mother always told me \"Go balls-deep in " + lastBall + "\".";
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": My mother always told me \"Go balls-deep in " + lastThing + "\".";
                     break;
                 case 3:
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Go balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Go balls-deep in " + lastThing + "!";
                     break;
                 case 4:
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": I am currently balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": I am currently balls-deep in " + lastThing + "!";
                     break;
                 default:
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": I love it when I am balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": I love it when I am balls-deep in " + lastThing + "!";
                     break;
-
 
             }
             return outmsg;
@@ -778,10 +761,11 @@ public class DialBOT : Window {
         }
 
         if (isHelpMatch.Success) {
-            return "PRIVMSG " + CHANNEL + " :I respond to these commands: 'DialBOT ROLL #d#', !WEATHER <ZIPCODE>, !STOCK <STOCK SYMBOL>, !NEWS <SUBREDDIT>, !BD, !UPBALL, !DOWNBALL, !BDREP, !BDSCORE and !BDHISTORY.";
+//            return "PRIVMSG " + CHANNEL + " :I respond to these commands: 'DialBOT ROLL #d#', !WEATHER <ZIPCODE>, !STOCK <STOCK SYMBOL>, !NEWS <SUBREDDIT>, !BD, !UPBALL, !DOWNBALL, !BDREP, !BDSCORE and !BDHISTORY.";
+            return "PRIVMSG " + CHANNEL + " :I respond to these commands: 'DialBOT ROLL #d#', !GODEEP, !UPDEEP, !DOWNDEEP, !DREP, !DSCORE and !DHISTORY.";
         }
 
-
+        // TODO: Move to config
         switch (choice) {
             case 0:
                 outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Sounds like you could use a little R&R. Rum and Ritalin.";
@@ -866,9 +850,9 @@ public class DialBOT : Window {
                 break;
 
             default:
-                List<String> activeBalls = getActiveBalls();
-                lastBall = activeBalls.ElementAt(random.Next(0, activeBalls.Count)).ToString();
-                outmsg = "PRIVMSG " + CHANNEL + " :Sorry, " + username + ", I am balls-deep in " + lastBall + " right now.";
+                List<String> activeThings = getActiveThings();
+                lastThing = activeThings.ElementAt(random.Next(0, activeThings.Count)).ToString();
+                outmsg = "PRIVMSG " + CHANNEL + " :Sorry, " + username + ", I am " + DEEPTHING + "-deep in " + lastThing + " right now.";
                 break;
         }
 
@@ -883,73 +867,73 @@ public class DialBOT : Window {
         String outmsg = "";
         int choice = random.Next(0, 3);
         
-        Regex isBallsDeep = new Regex(@"balls\-deep", RegexOptions.IgnoreCase);
+        Regex isThingsDeep = new Regex(@"" + DEEPTHING + @"\-deep", RegexOptions.IgnoreCase);
         Regex isWeather = new Regex(@"^\!Weather\s\d\d\d\d\d", RegexOptions.IgnoreCase);
         Regex isBot = new Regex(@"^botcheck", RegexOptions.IgnoreCase);
         Regex isNews = new Regex(@"^\!News.*$", RegexOptions.IgnoreCase);
         Regex isStock = new Regex(@"^\!Stock\s\w+", RegexOptions.IgnoreCase);
-        Regex isAddBall = new Regex(@"^\!bd\s.*$", RegexOptions.IgnoreCase);
-        Regex isUpBall = new Regex(@"^\!upball", RegexOptions.IgnoreCase);
-        Regex isDownBall = new Regex(@"^\!downball", RegexOptions.IgnoreCase);
-        Regex isBallScore = new Regex(@"^\!bdscore", RegexOptions.IgnoreCase);
-        Regex isBallHistory = new Regex(@"^\!bdhistory", RegexOptions.IgnoreCase);
-        Regex isBallRep = new Regex(@"^\!bdrep.*$", RegexOptions.IgnoreCase);
+        Regex isAddThing = new Regex(@"^\!godeep\s.*$", RegexOptions.IgnoreCase);
+        Regex isUpvote = new Regex(@"^\!updeep", RegexOptions.IgnoreCase);
+        Regex isDownvote = new Regex(@"^\!downdeep", RegexOptions.IgnoreCase);
+        Regex isThingScore = new Regex(@"^\!dscore", RegexOptions.IgnoreCase);
+        Regex isThingHistory = new Regex(@"^\!dhistory", RegexOptions.IgnoreCase);
+        Regex isThingRep = new Regex(@"^\!drep.*$", RegexOptions.IgnoreCase);
 
-        Match isBallsDeepMatch = isBallsDeep.Match(input);
-        Match isBallRepMatch = isBallRep.Match(input);
+        Match isThingsDeepMatch = isThingsDeep.Match(input);
+        Match isThingRepMatch = isThingRep.Match(input);
         Match weatherMatch = isWeather.Match(input);
         Match botMatch = isBot.Match(input);
         Match newsMatch = isNews.Match(input);
         Match stockMatch = isStock.Match(input);
-        Match isAddBallMatch = isAddBall.Match(input);
-        Match isUpBallMatch = isUpBall.Match(input);
-        Match isDownBallMatch = isDownBall.Match(input);
-        Match isBallScoreMatch = isBallScore.Match(input);
-        Match isBallHistoryMatch = isBallHistory.Match(input);
+        Match isAddThingMatch = isAddThing.Match(input);
+        Match isUpvoteMatch = isUpvote.Match(input);
+        Match isDownvoteMatch = isDownvote.Match(input);
+        Match isThingScoreMatch = isThingScore.Match(input);
+        Match isThingHistoryMatch = isThingHistory.Match(input);
 
 
-        if (isBallsDeepMatch.Success) {
+        if (isThingsDeepMatch.Success) {
             choice = random.Next(0, 6);
-            List<String> activeBalls = getActiveBalls();
-            lastBall = activeBalls.ElementAt(random.Next(0, activeBalls.Count)).ToString();
+            List<String> activeThings = getActiveThings();
+            lastThing = activeThings.ElementAt(random.Next(0, activeThings.Count)).ToString();
 
             switch (choice) {
                 case 0:
-                    outmsg = "PRIVMSG " + CHANNEL + " :Have you ever gone balls-deep in " + lastBall + "? It's wonderful!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :Have you ever gone " + DEEPTHING + "-deep in " + lastThing + "? It's wonderful!";
                     break;
                 case 1:
-                    outmsg = "PRIVMSG " + CHANNEL + " :Oh yeah. I am balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :Oh yeah. I am " + DEEPTHING + "-deep in " + lastThing + "!";
                     break;
                 case 2:
-                    outmsg = "PRIVMSG " + CHANNEL + " :My mother always told me \"Go balls-deep in " + lastBall + "\".";
+                    outmsg = "PRIVMSG " + CHANNEL + " :My mother always told me \"Go " + DEEPTHING + "-deep in " + lastThing + "\".";
                     break;
                 case 3:
-                    outmsg = "PRIVMSG " + CHANNEL + " :Go balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :Go " + DEEPTHING + "-deep in " + lastThing + "!";
                     break;
                 case 4:
-                    outmsg = "PRIVMSG " + CHANNEL + " :I am currently balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :I am currently " + DEEPTHING + "-deep in " + lastThing + "!";
                     break;
                 default:
-                    outmsg = "PRIVMSG " + CHANNEL + " :I love it when I am balls-deep in " + lastBall + "!";
+                    outmsg = "PRIVMSG " + CHANNEL + " :I love it when I am " + DEEPTHING + "-deep in " + lastThing + "!";
                     break;
 
 
             }
-        } else  if (isBallRepMatch.Success) {
-            String ballrepstr =isBallRepMatch.Value; 
-            if (ballrepstr.Length >= 7) {
+        } else  if (isThingRepMatch.Success) {
+            String thingrepstr =isThingRepMatch.Value; 
+            if (thingrepstr.Length > 7) {
                 // INcluded user name arg
-                String repuser = ballrepstr.Substring(7).Trim();
-                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": " + repuser+" has a total reputation by votes on submitted 'balls-deep' items of " + getBallRep(repuser) + ".";
+                String repuser = thingrepstr.Substring(7).Trim();
+                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": " + repuser + " has a total reputation by votes on submitted '" + DEEPTHING + "-deep' items of " + getThingRep(repuser) + ".";
 
             } else {
                 // Else default to current user
-                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Your total reputation by votes on submitted 'balls-deep' items is " + getBallRep(username) + ".";
+                outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Your total reputation by votes on submitted '" + DEEPTHING + "-deep' items is " + getThingRep(username) + ".";
             }
-        } else if (isBallHistoryMatch.Success) {
+        } else if (isThingHistoryMatch.Success) {
             String voteHistory = "";
             String created="";
-            foreach (KeyValuePair<String,Int16> kvp in ballsDeep[lastBall]) {
+            foreach (KeyValuePair<String,Int16> kvp in thingsDeep[lastThing]) {
                 if (kvp.Value==2) {
                     created= kvp.Key;
                 } else {
@@ -958,35 +942,35 @@ public class DialBOT : Window {
                 }
             }
 
-            outmsg = "PRIVMSG " + CHANNEL + " :Balls-deep in " + lastBall + ". History: Created by " + created + ". " + voteHistory; 
-        } else if (isBallScoreMatch.Success) {
-            if (lastBall.Equals("")) {
-                outmsg = "PRIVMSG " + CHANNEL + " :I haven't been balls-deep in anything yet!";
+            outmsg = "PRIVMSG " + CHANNEL + " :" + DEEPTHING + "-deep in " + lastThing + ". History: Created by " + created + ". " + voteHistory; 
+        } else if (isThingScoreMatch.Success) {
+            if (lastThing.Equals("")) {
+                outmsg = "PRIVMSG " + CHANNEL + " :I haven't been " + DEEPTHING + "-deep in anything yet!";
             } else {
-                outmsg = "PRIVMSG " + CHANNEL + " :Balls-deep in " + lastBall + ". Score = " + getBallScore(lastBall).First().Value + ", added by " + getBallScore(lastBall).First().Key+".";
+                outmsg = "PRIVMSG " + CHANNEL + " :" + DEEPTHING + "-deep in " + lastThing + ". Score = " + getThingScore(lastThing).First().Value + ", added by " + getThingScore(lastThing).First().Key+".";
             }
-        } else if (isAddBallMatch.Success) {
-            outmsg = "PRIVMSG " + CHANNEL + " :" + ballVote(input.Substring(4).Trim(), 2, username);
-        } else if (isUpBallMatch.Success) {
-            String tmpout = ballVote(lastBall, 1, username);
+        } else if (isAddThingMatch.Success) {
+            outmsg = "PRIVMSG " + CHANNEL + " :" + thingVote(input.Substring(8).Trim(), 2, username);
+        } else if (isUpvoteMatch.Success) {
+            String tmpout = thingVote(lastThing, 1, username);
         if (tmpout.Length > 0) outmsg = "PRIVMSG " + CHANNEL + " :" + tmpout;
-        } else if (isDownBallMatch.Success) {
-            String tmpout = ballVote(lastBall, -1, username);
+        } else if (isDownvoteMatch.Success) {
+            String tmpout = thingVote(lastThing, -1, username);
         if (tmpout.Length > 0) outmsg = "PRIVMSG " + CHANNEL + " :" + tmpout;
-    } else if (stockMatch.Success) {
+/*    } else if (stockMatch.Success) { // DISABLED
             String stockinfo = FetchStocks(stockMatch.Value.Substring(7));
             outmsg = "PRIVMSG " + CHANNEL + " :" + stockinfo;
-        } else if (newsMatch.Success) {
+        } else if (newsMatch.Success) { // DISABLED
             addToConsole("Getting Reddit news headline");
             String subreddit = "";
             if (input.Length > 6) { subreddit = input.Substring(6); }
             outmsg = "PRIVMSG " + CHANNEL + " :" + RedditNews(subreddit.Trim());
-        } else if (weatherMatch.Success) {
+        } else if (weatherMatch.Success) { // DISABLED
 // NEED TO USE A DIFFERENT API FOR WEATHER!
             String location = weatherMatch.Value.Substring(8);
 
             addToConsole("Getting weather info for " + location);
-            outmsg = "PRIVMSG " + CHANNEL + " :" + Weather(location);
+            outmsg = "PRIVMSG " + CHANNEL + " :" + Weather(location); */
         } else if (botMatch.Success) {
             choice = random.Next(0, 4);
             switch (choice) {
@@ -995,9 +979,9 @@ public class DialBOT : Window {
                     outmsg = "PRIVMSG " + CHANNEL + " :I am not a bot!";
                     break;
                 case 1:
-                    List<String> activeBalls = getActiveBalls();
-                    lastBall = activeBalls.ElementAt(random.Next(0, activeBalls.Count)).ToString();
-                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Fuck off! I am balls-deep in " + lastBall + " right now!";
+                    List<String> activeThings = getActiveThings();
+                    lastThing = activeThings.ElementAt(random.Next(0, activeThings.Count)).ToString();
+                    outmsg = "PRIVMSG " + CHANNEL + " :" + username + ": Fuck off! I am " + DEEPTHING + "-deep in " + lastThing + " right now!";
                     break;
                 case 2:
                     outmsg = "PRIVMSG " + CHANNEL + " :DONG!";
@@ -1196,63 +1180,99 @@ public class DialBOT : Window {
 
     // Initialize the store by filling it.
     private static void fillStore() {
-        foreach (String ballmsg in ballsDeep.Keys) {
-            Int16 totalvotes = getBallScore(ballmsg).First().Value;
-            String user = getBallScore(ballmsg).First().Key;
+        foreach (String thingmsg in thingsDeep.Keys) {
+            Int16 totalvotes = getThingScore(thingmsg).First().Value;
+            String user = getThingScore(thingmsg).First().Key;
             String score = totalvotes.ToString();
-            bdstore.AppendValues (user,score,ballmsg,getVoteString(ballmsg));
+            tdstore.AppendValues (user, score, thingmsg, getVoteString(thingmsg));
         }    
     }
 
 
-    // Update the store by either changing or adding a new ball message    
-    private static void updateStore(String ballmsg) {
+    // Update the store by either changing or adding a new thing message    
+    private static void updateStore(String thingmsg) {
         // We just need to match the message here... If no match ADD. If there is a match, update the score
-        Int16 totalvotes = getBallScore(ballmsg).First().Value;
-        String user = getBallScore(ballmsg).First().Key;
+        Int16 totalvotes = getThingScore(thingmsg).First().Value;
+        String user = getThingScore(thingmsg).First().Key;
         String score = totalvotes.ToString();
         TreeIter myiter;
-        bool success = bdstore.GetIterFirst(out myiter);
+        bool success = tdstore.GetIterFirst(out myiter);
         do {
-            String ballstring = bdstore.GetValue(myiter,2).ToString();
-            if (ballstring.Equals(ballmsg)) {
-                addToConsole("Found that " + ballmsg+" already existed! Updating score in treestore to " + score);            
-                bdstore.SetValue(myiter,1,score);
-                bdstore.SetValue(myiter,3,getVoteString(ballmsg));                
+            String thingstring = tdstore.GetValue(myiter, 2).ToString();
+            if (thingstring.Equals(thingmsg)) {
+                addToConsole("Found that " + thingmsg + " already existed! Updating score in treestore to " + score);            
+                tdstore.SetValue(myiter, 1, score);
+                tdstore.SetValue(myiter, 3, getVoteString(thingmsg));                
                 return;            
             }        
-            success = bdstore.IterNext(ref myiter);
+            success = tdstore.IterNext(ref myiter);
         } while (success);    
-        addToConsole("Found that " + ballmsg+" was new!");            
+        addToConsole("Found that " + thingmsg + " was new!");            
         String voteString = " ";
 
-        Console.WriteLine("Found that " + ballmsg+" was new! Score is " + score + ", user is "+user+". Votestring: " + voteString);
+        Console.WriteLine("Found that " + thingmsg + " was new! Score is " + score + ", user is " + user + ". Votestring: " + voteString);
         
-        bdstore.AppendValues (user, score,ballmsg,voteString);
+        tdstore.AppendValues (user, score, thingmsg, voteString);
 
         return;
     }
 
-    private static void LoadBalls() {
+    // Super simple config file method. Ignores lines that it does not recognize. Tab delimited list
+    /***       EXAMPLE
+     * SERVER	irc.test.com
+     * PORT	6670
+     * NICK	someBotName
+     ***/
+    private static void LoadConfig() {
+        string[] configFile = File.ReadAllLines(configFileName);
+        
+	foreach (String thisLine in configFile) {
+	    String[] splitLine = thisLine.Split('\t');
+	    if (String.Compare(splitLine[0], "SERVER") == 0) {
+		SERVER = splitLine[1];
+	    }
+	    if (String.Compare(splitLine[0], "PORT") == 0) {
+	    	PORT = Int32.Parse(splitLine[1]);
+	    }
+	    if (String.Compare(splitLine[0], "KILLTIME") == 0) {
+	    	KILLTIME = Int32.Parse(splitLine[1]);
+	    }
+	    if (String.Compare(splitLine[0], "NICK") == 0) {
+		NICK = splitLine[1];
+	    }
+	    if (String.Compare(splitLine[0], "CHANNEL") == 0) {
+		CHANNEL = splitLine[1];
+	    }
+	    if (String.Compare(splitLine[0], "DEEPTHING") == 0) {
+		DEEPTHING = splitLine[1];
+	    }
+
+	    if (String.Compare(splitLine[0], "USER") == 0) {
+		USER = splitLine[1];
+	    }
+	}
+    }
+
+    private static void LoadThings() {
         string[] file = File.ReadAllLines(@"ballsdeep.txt");
 
         foreach (String thisLine in file) {
             String[] splitLine = thisLine.Split('\t');
-            String ballmsg = splitLine[0];
+            String thingmsg = splitLine[0];
             Dictionary<String, Int16> innerDict = new Dictionary<String, Int16>();
             for (int i = 1; i < splitLine.Count()-1; i += 2) {
                 innerDict[splitLine[i]] = Convert.ToInt16(splitLine[i + 1]);
             }
-            ballsDeep[ballmsg] = innerDict;
+            thingsDeep[thingmsg] = innerDict;
         }
     }
 
-    private static void SaveBalls() {
+    private static void SaveThings() {
         // create a writer and open the file
         TextWriter tw = new StreamWriter(@"ballsdeep.txt");
 
         // write a line of text to the file
-        foreach (KeyValuePair<String, Dictionary<String,Int16>> kvp in ballsDeep) {
+        foreach (KeyValuePair<String, Dictionary<String,Int16>> kvp in thingsDeep) {
             String thisLine = kvp.Key;
             foreach (KeyValuePair<String, Int16> innerkvp in kvp.Value) {
                 thisLine = thisLine + '\t' + innerkvp.Key + '\t' + innerkvp.Value;
